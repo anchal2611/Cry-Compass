@@ -140,7 +140,9 @@ fun FinalOnboardingPage(navController: NavController) {
 
         Button(
             onClick = { navController.navigate("login") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
         ) {
             Text("Login")
         }
