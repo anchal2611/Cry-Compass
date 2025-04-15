@@ -2,13 +2,16 @@ package com.dev4.crycompass.ui.onboarding
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -31,18 +34,20 @@ fun OnboardingScreen(navController: NavController) {
         HorizontalPager(
             count = 3,
             state = pagerState,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
         ) { page ->
             when (page) {
                 0 -> OnboardingPage(
                     imageRes = R.drawable.onboarding1,
-                    title = "Track Cries",
-                    description = "AI-powered analysis to understand your baby better."
+                    title = "AI Chatbot for Parenting Support",
+                    description = "AI-powered chat assistant to understand your baby better."
                 )
                 1 -> OnboardingPage(
                     imageRes = R.drawable.onboarding2,
-                    title = "Real-Time Alerts",
-                    description = "Instant notifications when your baby cries."
+                    title = "Real-Time Cry Analysis",
+                    description = "Cry Compass analyzes your baby's cries in real-time using AI-based classification."
                 )
                 2 -> FinalOnboardingPage(navController)
             }
@@ -96,23 +101,35 @@ fun OnboardingPage(imageRes: Int, title: String, description: String) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Image(
             painter = painterResource(id = imageRes),
             contentDescription = title,
-            modifier = Modifier.size(260.dp) // 🔍 Increased image size
+            modifier = Modifier
+                .size(260.dp)
+                .clip(RoundedCornerShape(24.dp)) // ✅ Rounded corners
         )
+
         Spacer(modifier = Modifier.height(24.dp))
-        Text(text = title, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+        Text(
+            text = title,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+
         Spacer(modifier = Modifier.height(12.dp))
+
         Text(
             text = description,
             fontSize = 16.sp,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(horizontal = 24.dp),
+            textAlign = TextAlign.Center, // ✅ Centered text
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
     }
 }
@@ -124,17 +141,32 @@ fun FinalOnboardingPage(navController: NavController) {
             .fillMaxSize()
             .padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center // 🎯 Centered content
+        verticalArrangement = Arrangement.Center
     ) {
         Image(
-            painter = painterResource(id = R.drawable.logo), // 🖼️ Replaced with logo
+            painter = painterResource(id = R.drawable.logo),
             contentDescription = "Welcome Logo",
-            modifier = Modifier.size(200.dp)
+            modifier = Modifier
+                .size(200.dp)
+                .clip(RoundedCornerShape(32.dp)) // ✅ Rounded logo
         )
+
         Spacer(modifier = Modifier.height(24.dp))
-        Text("Welcome to Cry Compass", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+        Text(
+            text = "Welcome to Cry Compass",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Start by logging in or signing up.", fontSize = 16.sp)
+
+        Text(
+            text = "Start by logging in or signing up.",
+            fontSize = 16.sp,
+            textAlign = TextAlign.Center
+        )
 
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -151,7 +183,9 @@ fun FinalOnboardingPage(navController: NavController) {
 
         OutlinedButton(
             onClick = { navController.navigate("signup") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
         ) {
             Text("Sign Up")
         }

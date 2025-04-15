@@ -1,40 +1,129 @@
 package com.dev4.crycompass.ui.classifier
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.dev4.crycompass.ui.components.RoundedBottomNav
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.tensorflow.lite.Interpreter
+import java.io.FileInputStream
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
+import kotlin.math.abs
 import kotlin.random.Random
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CryClassifierScreen(navController: NavController) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val activity = context as ComponentActivity
+
     var isListening by remember { mutableStateOf(false) }
     var detectedCry by remember { mutableStateOf("Calm") }
+    var waveformHeights by remember { mutableStateOf(List(20) { 10f }) }
 
-    // Simulated classification loop
-    LaunchedEffect(isListening) {
-        if (isListening) {
-            while (true) {
-                delay(2000)
-                detectedCry = listOf("Hunger", "Sleep", "Discomfort", "Calm").random()
+    val permissionGranted = remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        permissionGranted.value = granted
+    }
+
+    fun loadModel(): Interpreter {
+        val fileDescriptor = context.assets.openFd("cry_model.tflite")
+        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
+        val fileChannel = inputStream.channel
+        val startOffset = fileDescriptor.startOffset
+        val declaredLength = fileDescriptor.declaredLength
+        val model: MappedByteBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+        return Interpreter(model)
+    }
+
+    fun startRecording(interpreter: Interpreter) {
+        val sampleRate = 16000
+        val bufferSize = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+
+        val audioRecord = AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            bufferSize
+        )
+
+        val buffer = ShortArray(bufferSize)
+
+        audioRecord.startRecording()
+        coroutineScope.launch(Dispatchers.Default) {
+            while (isActive && isListening) {
+                audioRecord.read(buffer, 0, buffer.size)
+
+                // Optional: Update waveform
+                val normalized = buffer.map { abs(it.toFloat()) / Short.MAX_VALUE }
+                waveformHeights = normalized.chunked(buffer.size / 20).map {
+                    it.average().toFloat() * 100f
+                }
+
+                // Dummy input for model. You can replace this with MFCCs or MelSpectrogram
+                val input = Array(1) { FloatArray(16000) { it / 16000f } }
+                val output = Array(1) { FloatArray(4) }
+
+                interpreter.run(input, output)
+                val labels = listOf("Hunger", "Sleep", "Discomfort", "Calm")
+                val maxIdx = output[0].indices.maxByOrNull { output[0][it] } ?: 3
+                detectedCry = labels[maxIdx]
+
+                delay(1000)
             }
+            audioRecord.stop()
+            audioRecord.release()
         }
     }
+
+    if (!permissionGranted.value) {
+        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    val interpreter by remember { mutableStateOf(loadModel()) }
 
     Scaffold(
         topBar = {
@@ -47,17 +136,15 @@ fun CryClassifierScreen(navController: NavController) {
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color.White
-                )
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.White)
             )
         },
         bottomBar = {
             RoundedBottomNav(
-                selected = "classifier",
+                selectedItem = "classifier",
                 onItemSelected = { route ->
                     navController.navigate(route) {
-                        popUpTo("home")
+                        popUpTo("home") { inclusive = false }
                         launchSingleTop = true
                     }
                 }
@@ -101,10 +188,13 @@ fun CryClassifierScreen(navController: NavController) {
                 }
             }
 
-            Waveform(isActive = isListening)
+            WaveformVisualizer(heights = waveformHeights)
 
             Button(
-                onClick = { isListening = !isListening },
+                onClick = {
+                    isListening = !isListening
+                    if (isListening) startRecording(interpreter)
+                },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (isListening) Color.Red else MaterialTheme.colorScheme.primary
                 )
@@ -116,19 +206,18 @@ fun CryClassifierScreen(navController: NavController) {
 }
 
 @Composable
-fun Waveform(isActive: Boolean) {
+fun WaveformVisualizer(heights: List<Float>) {
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
             .height(100.dp)
-            .background(Color(0xFFEEF7F7), shape = RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFEEF7F7))
             .padding(8.dp)
     ) {
-        val barCount = 20
-        val space = size.width / (barCount * 2)
+        val space = size.width / (heights.size * 2)
 
-        for (i in 0 until barCount) {
-            val height = if (isActive) Random.nextFloat() * size.height else size.height / 4
+        heights.forEachIndexed { i, height ->
             val x = i * 2 * space
             drawLine(
                 color = Color(0xFF80BFEA),
