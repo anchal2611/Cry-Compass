@@ -1,230 +1,161 @@
 package com.dev4.crycompass.ui.classifier
 
 import android.Manifest
-import android.content.pm.PackageManager
+import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import androidx.navigation.NavController
-import com.dev4.crycompass.ui.components.RoundedBottomNav
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
-import kotlin.math.abs
-import kotlin.random.Random
+import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CryClassifierScreen(navController: NavController) {
+fun CryClassifierScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val activity = context as ComponentActivity
 
-    var isListening by remember { mutableStateOf(false) }
-    var detectedCry by remember { mutableStateOf("Calm") }
-    var waveformHeights by remember { mutableStateOf(List(20) { 10f }) }
+    var detectionResult by remember { mutableStateOf<String?>(null) }
+    var isDetecting by remember { mutableStateOf(false) }
 
-    val permissionGranted = remember {
+    val interpreter by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-        )
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        permissionGranted.value = granted
-    }
-
-    fun loadModel(): Interpreter {
-        val fileDescriptor = context.assets.openFd("cry_model.tflite")
-        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        val startOffset = fileDescriptor.startOffset
-        val declaredLength = fileDescriptor.declaredLength
-        val model: MappedByteBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-        return Interpreter(model)
-    }
-
-    fun startRecording(interpreter: Interpreter) {
-        val sampleRate = 16000
-        val bufferSize = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-
-        val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufferSize
-        )
-
-        val buffer = ShortArray(bufferSize)
-
-        audioRecord.startRecording()
-        coroutineScope.launch(Dispatchers.Default) {
-            while (isActive && isListening) {
-                audioRecord.read(buffer, 0, buffer.size)
-
-                // Optional: Update waveform
-                val normalized = buffer.map { abs(it.toFloat()) / Short.MAX_VALUE }
-                waveformHeights = normalized.chunked(buffer.size / 20).map {
-                    it.average().toFloat() * 100f
-                }
-
-                // Dummy input for model. You can replace this with MFCCs or MelSpectrogram
-                val input = Array(1) { FloatArray(16000) { it / 16000f } }
-                val output = Array(1) { FloatArray(4) }
-
-                interpreter.run(input, output)
-                val labels = listOf("Hunger", "Sleep", "Discomfort", "Calm")
-                val maxIdx = output[0].indices.maxByOrNull { output[0][it] } ?: 3
-                detectedCry = labels[maxIdx]
-
-                delay(1000)
-            }
-            audioRecord.stop()
-            audioRecord.release()
-        }
-    }
-
-    if (!permissionGranted.value) {
-        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-    }
-
-    val interpreter by remember { mutableStateOf(loadModel()) }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Cry Classifier", fontSize = 20.sp) },
-                navigationIcon = {
-                    Icon(
-                        imageVector = Icons.Outlined.GraphicEq,
-                        contentDescription = null,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.White)
+            Interpreter(
+                context.assets.open("cry_model.tflite").readBytes(),
+                Interpreter.Options()
             )
-        },
-        bottomBar = {
-            RoundedBottomNav(
-                selectedItem = "classifier",
-                onItemSelected = { route ->
-                    navController.navigate(route) {
-                        popUpTo("home") { inclusive = false }
-                        launchSingleTop = true
-                    }
-                }
-            )
-        },
-        containerColor = Color(0xFFF9F9F9)
-    ) { padding ->
+        )
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFFDFDFD))
+            .padding(16.dp)
+    ) {
         Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF6F6))
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "Baby Crying Detection",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF222222)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .background(Color(0xFFE7EAFE), RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center
             ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = if (isListening) "Listening..." else "Tap to Start",
-                        fontSize = 18.sp,
-                        color = Color.DarkGray
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Detected: $detectedCry",
-                        fontSize = 24.sp,
-                        color = when (detectedCry) {
-                            "Hunger" -> Color(0xFFF4926F)
-                            "Sleep" -> Color(0xFFB3E5DC)
-                            "Discomfort" -> Color(0xFF80BFEA)
-                            else -> Color(0xFF4CAF50)
-                        }
-                    )
-                }
+                Text(
+                    text = detectionResult ?: "No cry detected yet",
+                    fontSize = 18.sp,
+                    color = Color(0xFF444444)
+                )
             }
 
-            WaveformVisualizer(heights = waveformHeights)
+            Spacer(modifier = Modifier.height(24.dp))
 
             Button(
                 onClick = {
-                    isListening = !isListening
-                    if (isListening) startRecording(interpreter)
+                    isDetecting = true
+                    detectionResult = "Listening..."
+                    coroutineScope.launch(Dispatchers.IO) {
+                        val result = startDetection(context, interpreter)
+                        detectionResult = result
+                        isDetecting = false
+                    }
                 },
+                enabled = !isDetecting,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isListening) Color.Red else MaterialTheme.colorScheme.primary
-                )
+                    containerColor = Color(0xFFFC8D87)
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
             ) {
-                Text(if (isListening) "Stop Detection" else "Start Detection")
+                Text(
+                    text = if (isDetecting) "Detecting..." else "Start Detecting",
+                    fontSize = 16.sp,
+                    color = Color.White
+                )
             }
+
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
 
-@Composable
-fun WaveformVisualizer(heights: List<Float>) {
-    Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(100.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFEEF7F7))
-            .padding(8.dp)
-    ) {
-        val space = size.width / (heights.size * 2)
+suspend fun startDetection(context: Context, interpreter: Interpreter): String {
+    val sampleRate = 16000
+    val bufferSize = AudioRecord.getMinBufferSize(
+        sampleRate,
+        AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT
+    )
 
-        heights.forEachIndexed { i, height ->
-            val x = i * 2 * space
-            drawLine(
-                color = Color(0xFF80BFEA),
-                start = androidx.compose.ui.geometry.Offset(x, size.height),
-                end = androidx.compose.ui.geometry.Offset(x, size.height - height),
-                strokeWidth = space
-            )
+    val audioRecord = AudioRecord(
+        MediaRecorder.AudioSource.MIC,
+        sampleRate,
+        AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT,
+        bufferSize
+    )
+
+    val audioBuffer = ShortArray(sampleRate) // 1 sec of audio
+
+    audioRecord.startRecording()
+    audioRecord.read(audioBuffer, 0, audioBuffer.size)
+    audioRecord.stop()
+    audioRecord.release()
+
+    // Convert audio to MelSpectrogram
+    val melSpec = AudioProcessing.generateMelSpectrogram(audioBuffer, sampleRate)
+
+    // Resize to 32x32 (you may use interpolation or center crop depending on size)
+    val resized = AudioProcessing.resizeSpectrogram(melSpec, 32, 32)
+
+    // Convert to ByteBuffer (float32, grayscale)
+    val input = ByteBuffer.allocateDirect(4 * 32 * 32)
+    input.order(ByteOrder.nativeOrder())
+    for (row in resized) {
+        for (value in row) {
+            input.putFloat(value)
         }
     }
+    input.rewind()
+
+    val output = TensorBuffer.createFixedSize(intArrayOf(1, 3), org.tensorflow.lite.DataType.FLOAT32)
+    interpreter.run(input, output.buffer.rewind())
+
+    val predictions = output.floatArray
+    val labels = listOf("Hungry", "Sleepy", "Discomfort")
+    val maxIndex = predictions.indices.maxByOrNull { predictions[it] } ?: 0
+    return "Detected: ${labels[maxIndex]}"
 }
+
